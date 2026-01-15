@@ -115,7 +115,8 @@ def separate_vocals_two_stage(input_audio: str,
                               base_model_name: str = "UVR-MDX-NET-Voc_FT.onnx",
                               clean_vocal_model_name: str = "UVR_MDXNET_KARA_2.onnx",
                               lead_vocal_model_name: str = "Reverb_HQ_By_FoxJoy.onnx",
-                              device: str = "cuda"):
+                              device: str = "cuda",
+                              progress_callback=None):
     """
     三阶段处理：
     1. 整首歌 -> base_model 分离出 人声 + 伴奏
@@ -123,14 +124,28 @@ def separate_vocals_two_stage(input_audio: str,
     3. 主唱(Main) -> lead_vocal_model 分离出 去混响(DeReverb) + 混响成分(Reverb)
     返回: (raw_vocals_path, instrumental_path, main_vocals_path, backup_vocals_path, main_dereverb_path, main_reverb_path)
     """
+    if progress_callback:
+        progress_callback(5, "正在加载模型参数...")
+    
     mdx_params = load_mdx_params()
 
     song_id = os.path.splitext(os.path.basename(input_audio))[0]
     song_dir = os.path.join(output_root, song_id)
     os.makedirs(song_dir, exist_ok=True)
 
+    if progress_callback:
+        progress_callback(10, "正在转换音频格式...")
+    
     stereo_path = convert_to_stereo_wav(input_audio)
+    
+    if progress_callback:
+        progress_callback(15, "正在加载基础模型...")
+    
     base_model_path = os.path.join(mdxnet_models_dir, base_model_name)
+    
+    if progress_callback:
+        progress_callback(20, "正在进行第一阶段分离（人声+伴奏）...")
+    
     raw_vocals_path, instrumental_path = run_mdx(
         mdx_params,
         song_dir,
@@ -140,6 +155,9 @@ def separate_vocals_two_stage(input_audio: str,
         keep_orig=True,
     )
 
+    if progress_callback:
+        progress_callback(45, "正在进行第二阶段分离（主唱+和声）...")
+    
     clean_model_path = os.path.join(mdxnet_models_dir, clean_vocal_model_name)
     backup_vocals_path, main_vocals_path = run_mdx(
         mdx_params,
@@ -152,6 +170,9 @@ def separate_vocals_two_stage(input_audio: str,
         keep_orig=True,
     )
 
+    if progress_callback:
+        progress_callback(70, "正在进行第三阶段分离（去混响）...")
+    
     lead_model_path = os.path.join(mdxnet_models_dir, lead_vocal_model_name)
     main_reverb_path, main_dereverb_path = run_mdx(
         mdx_params,
@@ -163,6 +184,10 @@ def separate_vocals_two_stage(input_audio: str,
         denoise=True,
         keep_orig=True,
     )
+    
+    if progress_callback:
+        progress_callback(85, "分离完成")
+    
     return (
         raw_vocals_path,
         instrumental_path,
@@ -173,7 +198,7 @@ def separate_vocals_two_stage(input_audio: str,
     )
 
 
-def main_func(input_audio: str, voice_model: str = None, device: str = "cuda") -> tuple[str, str]:
+def main_func(input_audio: str, voice_model: str = None, device: str = "cuda", progress_callback=None) -> tuple[str, str]:
     """
     主入口函数：接收音频文件，返回最终的人声和伴奏路径。
     
@@ -181,6 +206,7 @@ def main_func(input_audio: str, voice_model: str = None, device: str = "cuda") -
         input_audio: 输入音频路径
         voice_model: (可选) RVC 模型文件夹名称。如果不传，则只进行分离。
         device: 运行设备，默认 cuda
+        progress_callback: 进度回调函数，接收 (progress, status) 参数
         
     Returns:
         (final_vocal_path, instrumental_path): 元组，包含最终人声文件路径和伴奏文件路径
@@ -189,6 +215,9 @@ def main_func(input_audio: str, voice_model: str = None, device: str = "cuda") -
     if not os.path.exists(input_audio):
         raise FileNotFoundError(f"输入文件不存在: {input_audio}")
 
+    if progress_callback:
+        progress_callback(0, "开始处理...")
+    
     print(f"🚀 开始处理: {os.path.basename(input_audio)}")
     
     # 1. 调用原有的三阶段分离逻辑
@@ -199,7 +228,7 @@ def main_func(input_audio: str, voice_model: str = None, device: str = "cuda") -
         backup_vocals,
         main_dereverb,
         main_reverb,
-    ) = separate_vocals_two_stage(input_audio, device=device)
+    ) = separate_vocals_two_stage(input_audio, device=device, progress_callback=progress_callback)
 
     # 默认选择 "去混响后的主唱" 作为最佳人声素材
     # 如果分离失败导致文件缺失，则回退到 main_vocals 或 raw_vocals
@@ -209,6 +238,9 @@ def main_func(input_audio: str, voice_model: str = None, device: str = "cuda") -
 
     # 2. 如果指定了 RVC 模型，则进行变声推理
     if voice_model:
+        if progress_callback:
+            progress_callback(90, "正在进行RVC变声...")
+        
         print(f"🎤 检测到 RVC 模型 '{voice_model}'，准备进行变声...")
         
         # 构造输出路径：song_output/歌名/歌名_rvc.wav
@@ -229,6 +261,9 @@ def main_func(input_audio: str, voice_model: str = None, device: str = "cuda") -
             print(f"❌ RVC 变声失败，将返回原声: {e}")
             # 如果 RVC 失败，保持 final_vocal_path 为原声，不中断程序
 
+    if progress_callback:
+        progress_callback(100, "处理完成")
+    
     return final_vocal_path, instrumental
 
 
